@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'View/chat_screen.dart';
+
 void main() {
   runApp(const MyApp());
 }
@@ -105,11 +107,16 @@ class _MyHomePageState extends State<MyHomePage> {
           ],
         ),
       ),
+
+      
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => ChatPage()),
+        
+        // child: const Icon(Icons.message),
+      ),
+       ) // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
