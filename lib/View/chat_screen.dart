@@ -12,14 +12,14 @@ import 'package:dialogflow_grpc/dialogflow_grpc.dart';
 import 'package:dialogflow_grpc/generated/google/cloud/dialogflow/v2beta1/session.pb.dart';
 
 
-class Chat extends StatefulWidget {
-  Chat({ Key? key}) : super(key: key);
+class ChatScreen extends StatefulWidget {
+  ChatScreen({ Key? key}) : super(key: key);
 
   @override
-  _ChatState createState() => _ChatState();
+  _ChatScreenState createState() => _ChatScreenState();
 }
 
-class _ChatState extends State<Chat> {
+class _ChatScreenState extends State<ChatScreen> {
   final List<ChatMessage> _messages = <ChatMessage>[];
   final TextEditingController _textController = TextEditingController();
 

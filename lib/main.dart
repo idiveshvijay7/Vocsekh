@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'View/chat_screen.dart';
-
+import 'View/dashboard.dart';
+import 'View/dashboard.dart';
 
 void main() {
   runApp(MyApp());
@@ -25,7 +25,7 @@ class MyApp extends StatelessWidget {
         // is not restarted.
         primarySwatch: Colors.orange,
       ),
-      home: Chat(),
+      home: MyHomePage(),
     );
   }
 }
