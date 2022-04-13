@@ -1,187 +1,305 @@
-import 'dart:convert';
 
-import 'package:file_picker/file_picker.dart';
+// ignore_for_file: prefer_const_constructors
+
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:flutter_chat_types/flutter_chat_types.dart' as types;
-import 'package:flutter_chat_ui/flutter_chat_ui.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:intl/date_symbol_data_local.dart';
-import 'package:mime/mime.dart';
-import 'package:open_file/open_file.dart';
-import 'package:uuid/uuid.dart';
+import 'package:flutter/services.dart';
+import 'package:rxdart/rxdart.dart';
+import 'package:sound_stream/sound_stream.dart';
+
+// TODO import Dialogflow
+import 'package:dialogflow_grpc/dialogflow_grpc.dart';
+import 'package:dialogflow_grpc/generated/google/cloud/dialogflow/v2beta1/session.pb.dart';
 
 
-
-class ChatPage extends StatefulWidget {
-  const ChatPage({Key? key}) : super(key: key);
+class Chat extends StatefulWidget {
+  Chat({ Key? key}) : super(key: key);
 
   @override
-  _ChatPageState createState() => _ChatPageState();
+  _ChatState createState() => _ChatState();
 }
 
-class _ChatPageState extends State<ChatPage> {
-  List<types.Message> _messages = [];
-  final _user = const types.User(id: '06c33e8b-e835-4736-80f4-63f44b66666c');
+class _ChatState extends State<Chat> {
+  final List<ChatMessage> _messages = <ChatMessage>[];
+  final TextEditingController _textController = TextEditingController();
+
+  bool _isRecording = false;
+
+  RecorderStream _recorder = RecorderStream();
+  StreamSubscription? _recorderStatus;
+  StreamSubscription<List<int>>? _audioStreamSubscription;
+  BehaviorSubject<List<int>>? _audioStream;
+
+  // TODO DialogflowGrpc class instance
+  DialogflowGrpcV2Beta1? dialogflow;
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
+    initPlugin();
   }
 
-  void _addMessage(types.Message message) {
-    setState(() {
+  @override
+  void dispose() {
+    _recorderStatus?.cancel();
+    _audioStreamSubscription?.cancel();
+    super.dispose();
+  }
+
+  // Platform messages are asynchronous, so we initialize in an async method.
+  Future<void> initPlugin() async {
+    _recorderStatus = _recorder.status.listen((status) {
+      if (mounted)
+        setState(() {
+          _isRecording = status == SoundStreamStatus.Playing;
+        });
+    });
+
+    await Future.wait([
+      _recorder.initialize()
+    ]);
+
+
+
+    // TODO Get a Service account
+    // Get a Service account
+    final serviceAccount = ServiceAccount.fromString(
+        '${(await rootBundle.loadString('assets/credentials.json'))}');
+    // Create a DialogflowGrpc Instance
+    dialogflow = DialogflowGrpcV2Beta1.viaServiceAccount(serviceAccount);
+  }
+
+  void stopStream() async {
+    await _recorder.stop();
+    await _audioStreamSubscription?.cancel();
+    await _audioStream?.close();
+  }
+
+  void handleSubmitted(text) async {
+    print(text);
+    _textController.clear();
+
+    //TODO Dialogflow Code
+    ChatMessage message = ChatMessage(
+ text: text,
+ name: "You",
+ type: true,
+);
+
+setState(() {
+ _messages.insert(0, message);
+});
+
+DetectIntentResponse data = await dialogflow!.detectIntent(text, 'en-US');
+String fulfillmentText = data.queryResult.fulfillmentText;
+if(fulfillmentText.isNotEmpty) {
+  ChatMessage botMessage = ChatMessage(
+    text: fulfillmentText,
+    name: "Bot",
+    type: false,
+  );
+
+  setState(() {
+    _messages.insert(0, botMessage);
+  });
+}
+
+  }
+
+  void handleStream() async {
+    _recorder.start();
+
+    _audioStream = BehaviorSubject<List<int>>();
+    _audioStreamSubscription = _recorder.audioStream.listen((data) {
+      print(data);
+      _audioStream?.add(data);
+    });
+
+
+    // TODO Create SpeechContexts
+    // Create an audio InputConfig
+
+    var biasList = SpeechContextV2Beta1(
+    phrases: [
+      'Dialogflow CX',
+      'Dialogflow Essentials',
+      'Action Builder',
+      'HIPAA'
+    ],
+    boost: 20.0
+);
+
+    // See: https://cloud.google.com/dialogflow/es/docs/reference/rpc/google.cloud.dialogflow.v2#google.cloud.dialogflow.v2.InputAudioConfig
+var config = InputConfigV2beta1(
+    encoding: 'AUDIO_ENCODING_LINEAR_16',
+    languageCode: 'en-US',
+    sampleRateHertz: 16000,
+    singleUtterance: false,
+    speechContexts: [biasList]
+);
+
+    // TODO Make the streamingDetectIntent call, with the InputConfig and the audioStream
+    final responseStream = dialogflow!.streamingDetectIntent(config, _audioStream!);
+    // TODO Get the transcript and detectedIntent and show on screen
+    // Get the transcript and detectedIntent and show on screen
+responseStream.listen((data) {
+  //print('----');
+  setState(() {
+    //print(data);
+    String transcript = data.recognitionResult.transcript;
+    String queryText = data.queryResult.queryText;
+    String fulfillmentText = data.queryResult.fulfillmentText;
+
+    if(fulfillmentText.isNotEmpty) {
+
+      ChatMessage message = ChatMessage(
+        text: queryText,
+        name: "You",
+        type: true,
+      );
+
+      ChatMessage botMessage = ChatMessage(
+        text: fulfillmentText,
+        name: "Bot",
+        type: false,
+      );
+
       _messages.insert(0, message);
-    });
+      _textController.clear();
+      _messages.insert(0, botMessage);
+
+    }
+    if(transcript.isNotEmpty) {
+      _textController.text = transcript;
+    }
+
+  });
+},onError: (e){
+  //print(e);
+},onDone: () {
+  //print('done');
+});
+
   }
 
-  void _handleAtachmentPressed() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: SizedBox(
-            height: 144,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _handleImageSelection();
-                  },
-                  child: const Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: Text('Photo'),
-                  ),
+  // The chat interface
+  //
+  //------------------------------------------------------------------------------------
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      child: Column(children: <Widget>[
+        Flexible(
+            child: ListView.builder(
+              padding: EdgeInsets.all(8.0),
+              reverse: true,
+              itemBuilder: (_, int index) => _messages[index],
+              itemCount: _messages.length,
+            )),
+        Divider(height: 1.0),
+        Container(
+            decoration: BoxDecoration(color: Theme.of(context).cardColor),
+            child: IconTheme(
+              data: IconThemeData(color: Theme.of(context).accentColor),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Row(
+                  children: <Widget>[
+                    Flexible(
+                      child: TextField(
+                        controller: _textController,
+                        onSubmitted: handleSubmitted,
+                        decoration: InputDecoration.collapsed(hintText: "Send a message"),
+                      ),
+                    ),
+                    Container(
+                      margin: EdgeInsets.symmetric(horizontal: 4.0),
+                      child: IconButton(
+                        icon: Icon(Icons.send),
+                        onPressed: () => handleSubmitted(_textController.text),
+                      ),
+                    ),
+                    IconButton(
+                      iconSize: 30.0,
+                      icon: Icon(_isRecording ? Icons.mic_off : Icons.mic),
+                      onPressed: _isRecording ? stopStream : handleStream,
+                    ),
+                  ],
                 ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _handleFileSelection();
-                  },
-                  child: const Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: Text('File'),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: Text('Cancel'),
-                  ),
-                ),
-              ],
+              ),
+            )
+        ),
+      ]),
+    );
+  }
+}
+
+
+//------------------------------------------------------------------------------------
+// The chat message balloon
+//
+//------------------------------------------------------------------------------------
+class ChatMessage extends StatelessWidget {
+  ChatMessage({required this.text, required this.name, required this.type});
+
+  final String text;
+  final String name;
+  final bool type;
+
+  List<Widget> otherMessage(context) {
+    return <Widget>[
+      Container(
+        margin: const EdgeInsets.only(right: 16.0),
+        child: CircleAvatar(child: Text('B')),
+      ),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(this.name,
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            Container(
+              margin: const EdgeInsets.only(top: 5.0),
+              child: Text(text),
             ),
-          ),
-        );
-      },
-    );
+          ],
+        ),
+      ),
+    ];
   }
 
-  void _handleFileSelection() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-    );
-
-    if (result != null && result.files.single.path != null) {
-      final message = types.FileMessage(
-        author: _user,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        id: const Uuid().v4(),
-        mimeType: lookupMimeType(result.files.single.path!),
-        name: result.files.single.name,
-        size: result.files.single.size,
-        uri: result.files.single.path!,
-      );
-
-      _addMessage(message);
-    }
-  }
-
-  void _handleImageSelection() async {
-    final result = await ImagePicker().pickImage(
-      imageQuality: 70,
-      maxWidth: 1440,
-      source: ImageSource.gallery,
-    );
-
-    if (result != null) {
-      final bytes = await result.readAsBytes();
-      final image = await decodeImageFromList(bytes);
-
-      final message = types.ImageMessage(
-        author: _user,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        height: image.height.toDouble(),
-        id: const Uuid().v4(),
-        name: result.name,
-        size: bytes.length,
-        uri: result.path,
-        width: image.width.toDouble(),
-      );
-
-      _addMessage(message);
-    }
-  }
-
-  void _handleMessageTap(BuildContext context, types.Message message) async {
-    if (message is types.FileMessage) {
-      await OpenFile.open(message.uri);
-    }
-  }
-
-  void _handlePreviewDataFetched(
-    types.TextMessage message,
-    types.PreviewData previewData,
-  ) {
-    final index = _messages.indexWhere((element) => element.id == message.id);
-    final updatedMessage = _messages[index].copyWith(previewData: previewData);
-
-    WidgetsBinding.instance?.addPostFrameCallback((_) {
-      setState(() {
-        _messages[index] = updatedMessage;
-      });
-    });
-  }
-
-  void _handleSendPressed(types.PartialText message) {
-    final textMessage = types.TextMessage(
-      author: _user,
-      createdAt: DateTime.now().millisecondsSinceEpoch,
-      id: const Uuid().v4(),
-      text: message.text,
-    );
-
-    _addMessage(textMessage);
-  }
-
-  void _loadMessages() async {
-    final response = await rootBundle.loadString('assets/messages.json');
-    final messages = (jsonDecode(response) as List)
-        .map((e) => types.Message.fromJson(e as Map<String, dynamic>))
-        .toList();
-
-    setState(() {
-      _messages = messages;
-    });
+  List<Widget> myMessage(context) {
+    return <Widget>[
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: <Widget>[
+            Text(this.name, style: Theme.of(context).textTheme.subtitle1),
+            Container(
+              margin: const EdgeInsets.only(top: 5.0),
+              child: Text(text),
+            ),
+          ],
+        ),
+      ),
+      Container(
+        margin: const EdgeInsets.only(left: 16.0),
+        child: CircleAvatar(
+            child: Text(
+              this.name[0],
+              style: TextStyle(fontWeight: FontWeight.bold),
+            )),
+      ),
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: Chat(
-          messages: _messages,
-          onAttachmentPressed: _handleAtachmentPressed,
-          onMessageTap: _handleMessageTap,
-          onPreviewDataFetched: _handlePreviewDataFetched,
-          onSendPressed: _handleSendPressed,
-          user: _user,
-        ),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 10.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: this.type ? myMessage(context) : otherMessage(context),
       ),
     );
   }
